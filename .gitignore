@@ -1,0 +1,9 @@
+# Ignore SQLite database file
+reviews_db.sqlite
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore virtual environment
+venv/
