@@ -150,7 +150,7 @@ def populate_country_codes():
 
 
 
-# 🔹 Ensure Database and Tables Exist Before Running Streamlit
+# Ensure Database and Tables Exist Before Running Streamlit
 initialize_database()  # Creates `reviews_raw`, `reviews_clean`, `metadata`, `country_codes`
 populate_country_codes()  # Fetch country codes only if needed
 
@@ -222,9 +222,11 @@ def generate_author_id(author, location, brand):
     return hashlib.sha256(unique_str.encode()).hexdigest()[:7]  # Shorter 7-char hash
 
 
-# **🔹 Step 1: Fetch ISO Country Codes & Store in DB**
+#  Fetch ISO Country Codes & Store in DB
 def fetch_country_codes():
-    """Fetch ISO country codes and store in SQLite for reference."""
+    """
+    - Fetch ISO country codes and store in SQLite for reference
+    """
     url_cc = 'https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2#Officially_assigned_code_elements'
     tables = pd.read_html(url_cc)
     cc = tables[4]
@@ -239,7 +241,7 @@ def fetch_country_codes():
     conn.close()
 
 
-# **🔹 Step 2: Emoji Processing**
+# Emoji Processing
 def process_emojis(text):
     """ 
     - If text is only emojis, convert them to word equivalents.
@@ -257,9 +259,11 @@ def process_emojis(text):
     return ""  # Return empty string if not a string
 
 
-# **🔹 Step 3: Translation**
+# Text Translation
 def eng_translate(text):
-    """ Translates text if not in English, with a delay to prevent throttling """
+    """ 
+    - Translates text if not in English, with a delay to prevent throttling 
+    """
     if pd.isnull(text) or text.strip() == "":
         return text
     try:
@@ -273,7 +277,9 @@ def eng_translate(text):
 
 
 def map_country_names():
-    """Updates reviews_clean with country names based on location codes."""
+    """
+    -Updates reviews_clean with country names based on location codes
+    """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -294,14 +300,18 @@ def map_country_names():
     conn.close()
     #print("Country names updated in reviews_clean table.")
 
-# **Run this after processing new reviews**
+# Run this after processing new reviews
 map_country_names()
 
 
 def scrape_trustpilot(company, start_page, end_page):
     """Scrapes reviews from Trustpilot within the selected page range."""
     reviews = []
+    
+    # progress bar to track which pages are being scraped
     progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     total_pages = end_page - start_page + 1
     
     for idx, p in enumerate(range(start_page, end_page + 1)):
@@ -310,6 +320,9 @@ def scrape_trustpilot(company, start_page, end_page):
         response = requests.get(url)
         soup = BeautifulSoup(response.content, 'lxml')
         data = soup.find_all('article', {'data-service-review-card-paper': "true"})
+        
+        # Update progress bar text to show the current page being scraped
+        status_text.text(f"Scraping page {p} of {end_page}...")
 
         for container in data:
             author = container.find('span', {'data-consumer-name-typography': "true"})
@@ -407,7 +420,7 @@ def process_reviews():
 
 
 
-# **🔹 STREAMLIT APP **
+# ** STREAMLIT APP **
 st.title("Trustpilot Review Scraper")
 
 # User inputs the company to scrape
@@ -423,9 +436,9 @@ if company:
     stored_reviews = cursor.fetchone()[0] or 0
     conn.close()
 
-    st.write(f"📊 **Total pages available:** {last_page}")
-    st.write(f"✅ **Total pages already scraped:** {stored_reviews}")
-    st.write(f"🔹 **Recommended scrape range:** {start_page} → {end_page}")
+    st.write(f" **Total pages available:** {last_page}")
+    st.write(f" **Total pages already scraped:** {stored_reviews}")
+    st.write(f" **Recommended scrape range:** {start_page} → {end_page}")
     
     scrape_option = st.radio("Select Scrape Option:", [
         "Scrape all available pages",
@@ -444,6 +457,6 @@ if company:
         # **Process reviews immediately after scraping**
         num_processed = process_reviews()
 
-        st.success(f"✅ Scraped {pages_scraped} reviews from pages {start_page} → {end_page}!")
-        st.success(f"🔍 Processed {num_processed} reviews successfully!")
+        st.success(f" Scraped {pages_scraped} reviews from pages {start_page} → {end_page}!")
+        st.success(f" Processed {num_processed} reviews successfully!")
 
