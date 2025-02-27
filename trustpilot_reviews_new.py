@@ -43,8 +43,15 @@ from deep_translator import GoogleTranslator
 from langdetect import detect
 
 
+import os
+
+
+
+
 # Database setup
 DB_NAME = "review_db.sqlite"
+
+
 
 WIKI_COUNTRY_URL = "https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2#Officially_assigned_code_elements"
 
@@ -98,7 +105,8 @@ def initialize_database():
             review_date TEXT,
             experience_date TEXT,
             review_score TEXT,
-            invited_review TEXT
+            invited_review TEXT,
+            country_name
         )
     """)
 
@@ -222,25 +230,6 @@ def generate_author_id(author, location, brand):
     return hashlib.sha256(unique_str.encode()).hexdigest()[:7]  # Shorter 7-char hash
 
 
-#  Fetch ISO Country Codes & Store in DB
-def fetch_country_codes():
-    """
-    - Fetch ISO country codes and store in SQLite for reference
-    """
-    url_cc = 'https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2#Officially_assigned_code_elements'
-    tables = pd.read_html(url_cc)
-    cc = tables[4]
-    cc['country_code_lower'] = cc.iloc[:, 0].str.lower()
-    cc = cc[['country_code_lower', 'Country name (using title case)']]
-
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS country_codes")
-    cc.to_sql("country_codes", conn, if_exists="replace", index=False)
-    conn.commit()
-    conn.close()
-
-
 # Emoji Processing
 def process_emojis(text):
     """ 
@@ -278,23 +267,28 @@ def eng_translate(text):
 
 def map_country_names():
     """
-    -Updates reviews_clean with country names based on location codes
+    - Updates `country_name` in `reviews_clean` by looking up country_codes based on `location`
     """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # **Perform an SQL JOIN to update country names**
+    # Perform an SQL JOIN to update country names
     cursor.execute("""
         UPDATE reviews_clean
-        SET location = (
+        SET country_name = (
             SELECT country_name 
             FROM country_codes 
-            WHERE country_codes.country_code = reviews_clean.location
+            WHERE LOWER(country_codes.country_code) = LOWER(reviews_clean.location)
         )
-        WHERE EXISTS (
-            SELECT 1 FROM country_codes WHERE country_codes.country_code = reviews_clean.location
-        )
+        WHERE country_name IS NULL OR country_name = ''
     """)
+    # If no match is found, set country_name = location
+    cursor.execute("""
+        UPDATE reviews_clean
+        SET country_name = location
+        WHERE (country_name IS NULL OR country_name = '') AND location != ''
+    """)
+    
 
     conn.commit()
     conn.close()
@@ -412,6 +406,8 @@ def process_reviews():
 
     conn.commit()
     conn.close()
+    
+    map_country_names()
 
     return len(processed_reviews)
 
@@ -423,8 +419,11 @@ def process_reviews():
 # ** STREAMLIT APP **
 st.title("Trustpilot Review Scraper")
 
+
 # User inputs the company to scrape
 company = st.text_input("Enter Trustpilot URL segment (e.g., `www.trustedhousesitters.com`):")
+
+st.write(f"📂 Database Location: {os.path.abspath(DB_NAME)}")
 
 if company:
     start_page, end_page, last_page = determine_scrape_pages(company)
