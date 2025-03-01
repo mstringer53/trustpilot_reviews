@@ -49,7 +49,7 @@ import os
 
 
 # Database setup
-DB_NAME = "review_db.sqlite"
+DB_NAME = "review_db___.sqlite"
 
 
 
@@ -163,6 +163,10 @@ initialize_database()  # Creates `reviews_raw`, `reviews_clean`, `metadata`, `co
 populate_country_codes()  # Fetch country codes only if needed
 
 
+
+if "stop_scraping" not in st.session_state:
+    st.session_state.stop_scraping = False  # Default to False (meaning: continue scraping)
+
 def get_last_page_number(company):
     """Scrapes Trustpilot to get the last available review page number."""
     url = f"https://uk.trustpilot.com/review/{company}?languages=all&sort=recency"
@@ -209,16 +213,21 @@ def determine_scrape_pages(company):
 
     # **Case 1: First-time scrape (No data in metadata)**
     if last_scraped_page is None:
-        start_page = max(1, total_pages - 24)  # Start from the last available page downwards
-        end_page = total_pages  # Scrape from the last page backwards
+        #start_page = max(1, total_pages - 49)  # Start from the last available page downwards
+        #end_page = total_pages  # Scrape from the last page backwards
+        start_page = total_pages  # Start at the highest page
+        end_page = max(1, total_pages - 49)  # Scrape downward in batches of 50
+        
         return start_page, end_page, total_pages
 
     # **Case 2: Scraping again (new pages exist)**
-    new_pages = total_pages - prev_total_pages if prev_total_pages else 0
+    #new_pages = total_pages - prev_total_pages if prev_total_pages else 0
 
     # **Adjust logic to ensure we scrape from the oldest pages that haven't been collected**
-    start_page = max(1, last_scraped_page - 24)
-    end_page = last_scraped_page
+    #start_page = max(1, last_scraped_page - 49)
+    #end_page = last_scraped_page
+    start_page = last_scraped_page
+    end_page = max(1, last_scraped_page - 49)
 
     return start_page, end_page, total_pages
 
@@ -372,8 +381,14 @@ def process_reviews():
         FROM reviews_raw
     """)
     rows = cursor.fetchall()
+    
+    total_reviews = len(rows)  # Get the total number of reviews to process
+    if total_reviews == 0:
+        return 0  # No reviews to process
 
     processed_reviews = []
+    progress_bar = st.progress(0)  # Initialize the progress bar
+    
     for row in rows:
         review_id, brand, author_id, location, num_reviews, review_title, review_txt, review_date, experience_date, review_score, invited_review = row
 
@@ -395,6 +410,10 @@ def process_reviews():
 
         # Delete from `reviews_raw` after processing
         cursor.execute("DELETE FROM reviews_raw WHERE id = ?", (review_id,))
+        
+        # **Update progress bar**
+        progress_bar.progress((row + 1) / total_reviews)
+        
 
     # Store cleaned data in `reviews_clean`
     cursor.executemany("""
@@ -408,12 +427,45 @@ def process_reviews():
     conn.close()
     
     map_country_names()
+    
+    # **Complete the progress bar**
+    progress_bar.empty()  # Remove the progress bar after completion
 
     return len(processed_reviews)
 
 
 
+# Define session state for stopping scraping
+if "stop_scraping" not in st.session_state:
+    st.session_state.stop_scraping = False
 
+
+def scrape_trustpilot_auto(company, start_page, end_page, batch_size=50):
+    """Automatically scrapes reviews in batches while allowing user to stop."""
+    
+    total_pages = end_page - start_page + 1
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    while start_page >= 1 and not st.session_state.stop_scraping:
+        batch_end_page = max(1, start_page - batch_size + 1)  # Move backward in batches
+        pages_scraped = scrape_trustpilot(company, batch_end_page, start_page)
+
+        # ✅ **Store progress in the database**
+        
+        
+        num_processed = process_reviews()
+        update_last_scraped_page(company, batch_end_page, end_page)
+        
+        
+        # ✅ **Update UI messages**
+        st.success(f"✔ Scraped {pages_scraped} reviews from pages {batch_end_page} → {start_page}!")
+        st.write(f"✅ Moving to next batch: {batch_end_page - batch_size} → {batch_end_page}...")
+        st.success(f"🔍 Processed {num_processed} reviews successfully!")
+
+        start_page -= batch_size  # Move to the next batch
+
+    st.success("✅ Scraping complete!")
 
 
 # ** STREAMLIT APP **
@@ -448,14 +500,29 @@ if company:
     if scrape_option == "Scrape a custom range":
         start_page = st.number_input("Start Page:", min_value=1, max_value=last_page, value=start_page)
         end_page = st.number_input("End Page:", min_value=1, max_value=last_page, value=end_page)
-
+        
+    if st.button("Stop Scraping"):
+        st.session_state.stop_scraping = True #Flag to stop scraping
+        st.warning("Scraping will stop after the current batch is complete")
+        
     if st.button("Start Scraping"):
-        pages_scraped = scrape_trustpilot(company, start_page, end_page)
-        update_last_scraped_page(company, start_page, last_page)
+        st.session_state.stop_scraping = False #reset stop flag
+        
+        
 
+        if scrape_option == "Scrape all available pages":
+            pages_scraped = scrape_trustpilot_auto(company, start_page, end_page, batch_size=50)
+        else:
+            pages_scraped = scrape_trustpilot(company, start_page, end_page)
+
+        
         # **Process reviews immediately after scraping**
         num_processed = process_reviews()
+        update_last_scraped_page(company, end_page, last_page)
 
-        st.success(f" Scraped {pages_scraped} reviews from pages {start_page} → {end_page}!")
-        st.success(f" Processed {num_processed} reviews successfully!")
+        st.success(f"✅ Scraped {pages_scraped} reviews from pages {start_page} → {end_page}!")
+        st.success(f"🔍 Processed {num_processed} reviews successfully!")
+
+
+    
 
