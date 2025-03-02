@@ -117,13 +117,25 @@ def initialize_database():
             country_name TEXT
         )
     """)
+    
+    # Track each page that has been scraped
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS scraped_pages (
+            brand TEXT,
+            page_number INTEGER,
+            scraped_date TEXT,
+            PRIMARY KEY (brand, page_number)
+        )
+    """)
+
+    
 
     conn.commit()
 
     # **Debugging: Check if Table Exists**
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = cursor.fetchall()
-    print("✅ Tables in DB:", tables)  # This will show all existing tables
+    #cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    #tables = cursor.fetchall()
+    #print("✅ Tables in DB:", tables)  # This will show all existing tables
 
     conn.close()
 
@@ -317,6 +329,10 @@ def scrape_trustpilot(company, start_page, end_page):
     
     total_pages = end_page - start_page + 1
     
+    # Open DB connection once (rather than opening & closing in each loop)
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
     for idx, p in enumerate(range(start_page, end_page + 1)):
         url = f"https://uk.trustpilot.com/review/{company}?languages=all&page={p}&sort=recency"
         time.sleep(.5)  # Prevents excessive requests
@@ -324,8 +340,17 @@ def scrape_trustpilot(company, start_page, end_page):
         soup = BeautifulSoup(response.content, 'lxml')
         data = soup.find_all('article', {'data-service-review-card-paper': "true"})
         
+        # Log the scraped page
+        cursor.execute("""
+            INSERT OR IGNORE INTO scraped_pages (brand, page_number, scraped_date) 
+            VALUES (?, ?, ?)
+        """, (company, p, datetime.datetime.now().strftime('%Y-%m-%d')))
+        
+        
         # Update progress bar text to show the current page being scraped
         status_text.text(f"Scraping page {p} of {end_page}...")
+        
+        
 
         for container in data:
             author = container.find('span', {'data-consumer-name-typography': "true"})
@@ -354,12 +379,12 @@ def scrape_trustpilot(company, start_page, end_page):
             author_id = generate_author_id(author, location, company)
 
             reviews.append((company, author_id, location, num_reviews, review_title, review_text, review_date, experience_date, review_score, invited_review))
-            
+        
         progress_bar.progress((idx +1)/total_pages)
 
     # Store in DB
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    #conn = sqlite3.connect(DB_NAME)
+    #cursor = conn.cursor()
     cursor.executemany("""
         INSERT INTO reviews_raw (brand, author_id, location, num_reviews, review_title, review_txt, review_date, experience_date, review_score, invited_review)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -389,7 +414,7 @@ def process_reviews():
     processed_reviews = []
     progress_bar = st.progress(0)  # Initialize the progress bar
     
-    for row in rows:
+    for idx, row in enumerate(rows):
         review_id, brand, author_id, location, num_reviews, review_title, review_txt, review_date, experience_date, review_score, invited_review = row
 
         # Process emojis
@@ -412,7 +437,7 @@ def process_reviews():
         cursor.execute("DELETE FROM reviews_raw WHERE id = ?", (review_id,))
         
         # **Update progress bar**
-        progress_bar.progress((row + 1) / total_reviews)
+        progress_bar.progress((idx + 1) / total_reviews)
         
 
     # Store cleaned data in `reviews_clean`
@@ -475,7 +500,7 @@ st.title("Trustpilot Review Scraper")
 # User inputs the company to scrape
 company = st.text_input("Enter Trustpilot URL segment (e.g., `www.trustedhousesitters.com`):")
 
-st.write(f"📂 Database Location: {os.path.abspath(DB_NAME)}")
+#st.write(f"📂 Database Location: {os.path.abspath(DB_NAME)}")
 
 if company:
     start_page, end_page, last_page = determine_scrape_pages(company)
@@ -483,7 +508,7 @@ if company:
     # Get previously scraped pages
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(DISTINCT review_date) FROM reviews_clean WHERE brand = ?", (company,))
+    cursor.execute("SELECT COUNT(DISTINCT page_number) FROM scraped_pages WHERE brand = ?", (company,))
     stored_reviews = cursor.fetchone()[0] or 0
     conn.close()
 
@@ -494,7 +519,7 @@ if company:
     scrape_option = st.radio("Select Scrape Option:", [
         "Scrape all available pages",
         "Scrape a custom range",
-        "Scrape the next 25 pages"
+        "Scrape the next 50 pages"
     ])
 
     if scrape_option == "Scrape a custom range":
