@@ -323,6 +323,9 @@ def scrape_trustpilot(company, start_page, end_page):
     """Scrapes reviews from Trustpilot within the selected page range."""
     reviews = []
     
+    # 🚀 DEBUG: Check if function is called
+    print(f"🔍 scrape_trustpilot() called with Start: {start_page}, End: {end_page}")
+    
     # progress bar to track which pages are being scraped
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -334,6 +337,7 @@ def scrape_trustpilot(company, start_page, end_page):
     cursor = conn.cursor()
     
     for idx, p in enumerate(range(start_page, end_page + 1)):
+        print(f"✅ Scraping page {p}...")  # 🚀 DEBUG LINE
         url = f"https://uk.trustpilot.com/review/{company}?languages=all&page={p}&sort=recency"
         time.sleep(.5)  # Prevents excessive requests
         response = requests.get(url)
@@ -523,12 +527,17 @@ if company:
     ])
 
     if scrape_option == "Scrape a custom range":
-        start_page = st.number_input("Start Page:", min_value=1, max_value=last_page, value=start_page)
-        end_page = st.number_input("End Page:", min_value=1, max_value=last_page, value=end_page)
+        custom_start_page = st.number_input("Start Page:", min_value=1, max_value=last_page, value=start_page)
+        custom_end_page = st.number_input("End Page:", min_value=1, max_value=last_page, value=end_page)
+        start_page = custom_end_page
+        end_page = custom_start_page
         
     if st.button("Stop Scraping"):
         st.session_state.stop_scraping = True #Flag to stop scraping
         st.warning("Scraping will stop after the current batch is complete")
+        
+        # 🚀 DEBUGGING: Check values before calling scrape function
+        st.write(f"🔍 DEBUG: Start Page = {start_page}, End Page = {end_page}")
         
     if st.button("Start Scraping"):
         st.session_state.stop_scraping = False #reset stop flag
@@ -537,8 +546,11 @@ if company:
 
         if scrape_option == "Scrape all available pages":
             pages_scraped = scrape_trustpilot_auto(company, start_page, end_page, batch_size=50)
-        else:
+        elif scrape_option == "Scrape a custom range":
+            st.write("✅ Running scrape_trustpilot() for custom range")  # 🚀 DEBUG LINE
             pages_scraped = scrape_trustpilot(company, start_page, end_page)
+        else:
+            pages_scraped = scrape_trustpilot(company, max(end_page - 50, 1),end_page)  # Scrape next 50 pages
 
         
         # **Process reviews immediately after scraping**
